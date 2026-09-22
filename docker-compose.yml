@@ -1,0 +1,67 @@
+---
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    security_opt:
+      - no-new-privileges:true
+
+  # Waits for the daemon, pulls the model into the shared volume, exits.
+  model-init:
+    image: ollama/ollama:latest
+    container_name: ollama-model-init
+    restart: "no"
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:4b}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until ollama list >/dev/null 2>&1; do
+          echo "waiting for the ollama daemon"
+          sleep 2
+        done
+        ollama pull "$$OLLAMA_MODEL"
+
+  agent:
+    build: .
+    image: ollama-text-agent:latest
+    container_name: ollama-text-agent
+    restart: unless-stopped
+    depends_on:
+      model-init:
+        condition: service_completed_successfully
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:4b}
+      AGENT_API_KEY: ${AGENT_API_KEY:-}
+      MAX_INPUT_CHARS: ${MAX_INPUT_CHARS:-8000}
+      DEFAULT_TEMPERATURE: ${DEFAULT_TEMPERATURE:-0.2}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-300}
+      NUM_PREDICT: ${NUM_PREDICT:-1024}
+      NUM_CTX: ${NUM_CTX:-4096}
+      WARMUP_ON_START: ${WARMUP_ON_START:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "8000:8000"
+    security_opt:
+      - no-new-privileges:true
+    # The slim image ships no curl.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8000/health')
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  ollama-models:

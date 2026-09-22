@@ -1,0 +1,134 @@
+---
+- hosts: "localhost"
+  gather_facts: no
+  # always, so --tags key still builds the linux group.
+  tags: always
+  tasks:
+  - include_vars: "{{ playbook_dir }}/vars.yml"
+  - name: Add host from variable file
+    add_host:
+      groups: linux
+      hostname: "{{ server_ip }}"
+      ansible_user: "{{ ssh_user }}"
+      ansible_python_interpreter: "/usr/bin/python3"
+
+- hosts: linux
+  become: true
+  tags: deploy
+
+  pre_tasks:
+  - name: Update and Upgrade
+    apt:
+      update_cache: yes
+      upgrade: 'yes'
+
+  tasks:
+  - include_vars: "{{ playbook_dir }}/vars.yml"
+    tags: always
+
+  - name: Add user to the Docker group.
+    user:
+      name: "{{ ssh_user }}"
+      groups: docker
+      append: yes
+
+  - name: Create the agent directory
+    ansible.builtin.file:
+      path: "{{ agent_dir }}"
+      state: directory
+      mode: '0755'
+
+  - name: Copy the build context
+    ansible.builtin.copy:
+      src: "{{ playbook_dir }}/../{{ item }}"
+      dest: "{{ agent_dir }}/"
+      owner: root
+      group: root
+      mode: '0644'
+      backup: yes
+    loop:
+      - docker-compose.yml
+      - Dockerfile
+      - .dockerignore
+      - requirements.txt
+
+  # The trailing slash copies the contents, so the package lands at app/
+  # rather than one level deeper.
+  - name: Copy the application package
+    ansible.builtin.copy:
+      src: "{{ playbook_dir }}/../app/"
+      dest: "{{ agent_dir }}/app/"
+      owner: root
+      group: root
+      mode: '0644'
+
+  - name: Look for an environment file from a previous deploy
+    ansible.builtin.slurp:
+      src: "{{ agent_dir }}/.env"
+    register: existing_env
+    failed_when: false
+    no_log: true
+    tags: key
+
+  # Generated once, then read back on every rerun so redeploying never
+  # invalidates the clients already using it. Override with -e agent_api_key=...
+  - name: Resolve the API key
+    ansible.builtin.set_fact:
+      resolved_api_key: >-
+        {{ agent_api_key | default('', true)
+           or (existing_env.content | default('') | b64decode
+               | regex_search('AGENT_API_KEY=([^\n]*)', '\1')
+               | default([''], true) | first | trim)
+           or lookup('password', '/dev/null length=40 chars=ascii_letters,digits') }}
+    no_log: true
+    tags: key
+
+  - name: Write the environment file
+    ansible.builtin.copy:
+      content: |
+        OLLAMA_MODEL={{ ollama_model }}
+        AGENT_API_KEY={{ resolved_api_key }}
+        MAX_INPUT_CHARS={{ max_input_chars }}
+        DEFAULT_TEMPERATURE={{ default_temperature }}
+        REQUEST_TIMEOUT={{ request_timeout }}
+        NUM_PREDICT={{ num_predict }}
+        NUM_CTX={{ num_ctx }}
+        WARMUP_ON_START={{ warmup_on_start }}
+      dest: "{{ agent_dir }}/.env"
+      owner: root
+      group: root
+      mode: '0600'
+    no_log: true
+
+  # build: always picks up code changes. recreate: always is deliberately not
+  # set: it would restart Ollama and drop the loaded model on every rerun.
+  - name: Start the agent stack
+    community.docker.docker_compose_v2:
+      project_src: "{{ agent_dir }}"
+      state: present
+      build: always
+
+  - name: Allow the agent port {{ agent_port }}/TCP
+    community.general.ufw:
+      rule: allow
+      port: "{{ agent_port }}"
+      proto: tcp
+
+  - name: Wait for the agent to report ready
+    ansible.builtin.uri:
+      url: "http://{{ server_ip }}:{{ agent_port }}/ready"
+      status_code: 200
+    register: agent_ready
+    retries: 30
+    delay: 5
+    until: agent_ready is succeeded
+    when: not ansible_check_mode
+
+  - name: Where to find the agent
+    ansible.builtin.debug:
+      msg:
+        - "The agent is running at http://{{ server_ip }}:{{ agent_port }} (docs at /docs)"
+        - "Model: {{ ollama_model }}"
+        - "API key: {{ resolved_api_key }}"
+        - "The key also lives in {{ agent_dir }}/.env on the server (root, 0600)."
+    tags: key

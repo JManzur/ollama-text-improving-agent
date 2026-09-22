@@ -1,0 +1,10 @@
+---
+# Install with: ansible-galaxy collection install -r requirements.yml
+collections:
+  # docker_compose_v2, drives the Compose stack on the server. Added in 3.6.0.
+  - name: community.docker
+    version: ">=3.6.0"
+
+  # ufw, opens the agent port on the server firewall.
+  - name: community.general
+    version: ">=8.0.0"

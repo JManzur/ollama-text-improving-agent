@@ -1,0 +1,15 @@
+# The agent reads its settings from the environment Compose passes in, so the
+# .env never needs to reach the daemon as build context.
+.env
+*.env
+!.env.example
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+.git/
+ansible/
+README.md
+CLAUDE.md

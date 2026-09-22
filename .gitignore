@@ -1,0 +1,14 @@
+# Local assistant guidance, not part of the published project
+CLAUDE.md
+
+# Never commit secrets
+.env
+*.env
+!.env.example
+
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+.vscode

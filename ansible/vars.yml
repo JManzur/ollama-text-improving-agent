@@ -1,0 +1,19 @@
+---
+# The Ubuntu host to deploy to. It needs Docker and the Compose v2 plugin.
+server_ip: 192.168.120.252
+ssh_user: jmanzur
+agent_dir: /opt/ollama-agent
+agent_port: 8000
+
+# granite4:7b-a1b-h is the Apache-2.0 alternative, faster but weaker on Spanish.
+# Confirm tags at https://ollama.com/library.
+ollama_model: gemma3:4b
+
+# Bounds enforced by the agent.
+max_input_chars: 8000
+default_temperature: 0.2
+request_timeout: 300
+
+num_predict: 1024
+num_ctx: 4096
+warmup_on_start: true
